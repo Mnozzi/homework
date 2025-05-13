@@ -1,0 +1,25 @@
+INFO: Starting training:
+        Epochs:          10
+        Batch size:      2
+        Learning rate:   0.0001
+        Training size:   24
+        Validation size: 6
+        Checkpoints:     True
+        Device:          cpu
+        Images scaling:  0.5
+        Mixed Precision: False
+
+Epoch 1/10:  17%|█▋        | 4/24 [00:36<03:02,  9.15s/img, loss (batch)=0.524]
+Traceback (most recent call last):
+  File "C:\Users\张恩溪\Desktop\OTMorph-main\homework\Pytorch-UNet-master\train.py", line 234, in <module>
+    train_model(
+  File "C:\Users\张恩溪\Desktop\OTMorph-main\homework\Pytorch-UNet-master\train.py", line 98, in train_model
+    loss.backward()
+  File "D:\anaconda3\envs\exp1\Lib\site-packages\torch\_tensor.py", line 626, in backward
+    torch.autograd.backward(
+  File "D:\anaconda3\envs\exp1\Lib\site-packages\torch\autograd\__init__.py", line 347, in backward
+    _engine_run_backward(
+  File "D:\anaconda3\envs\exp1\Lib\site-packages\torch\autograd\graph.py", line 823, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt

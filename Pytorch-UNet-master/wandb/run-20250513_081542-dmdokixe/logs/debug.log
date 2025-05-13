@@ -1,0 +1,24 @@
+2025-05-13 08:15:42,333 INFO    MainThread:6088 [wandb_setup.py:_flush():70] Current SDK version is 0.19.11
+2025-05-13 08:15:42,333 INFO    MainThread:6088 [wandb_setup.py:_flush():70] Configure stats pid to 6088
+2025-05-13 08:15:42,333 INFO    MainThread:6088 [wandb_setup.py:_flush():70] Loading settings from C:\Users\ÕÅ¶÷Ïª\.config\wandb\settings
+2025-05-13 08:15:42,334 INFO    MainThread:6088 [wandb_setup.py:_flush():70] Loading settings from C:\Users\ÕÅ¶÷Ïª\Desktop\OTMorph-main\homework\Pytorch-UNet-master\wandb\settings
+2025-05-13 08:15:42,334 INFO    MainThread:6088 [wandb_setup.py:_flush():70] Loading settings from environment variables
+2025-05-13 08:15:42,334 INFO    MainThread:6088 [wandb_init.py:setup_run_log_directory():724] Logging user logs to C:\Users\ÕÅ¶÷Ïª\Desktop\OTMorph-main\homework\Pytorch-UNet-master\wandb\run-20250513_081542-dmdokixe\logs\debug.log
+2025-05-13 08:15:42,335 INFO    MainThread:6088 [wandb_init.py:setup_run_log_directory():725] Logging internal logs to C:\Users\ÕÅ¶÷Ïª\Desktop\OTMorph-main\homework\Pytorch-UNet-master\wandb\run-20250513_081542-dmdokixe\logs\debug-internal.log
+2025-05-13 08:15:42,335 INFO    MainThread:6088 [wandb_init.py:init():852] calling init triggers
+2025-05-13 08:15:42,335 INFO    MainThread:6088 [wandb_init.py:init():857] wandb.init called with sweep_config: {}
+config: {'_wandb': {}}
+2025-05-13 08:15:42,335 INFO    MainThread:6088 [wandb_init.py:init():893] starting backend
+2025-05-13 08:15:42,335 INFO    MainThread:6088 [wandb_init.py:init():897] sending inform_init request
+2025-05-13 08:15:42,412 INFO    MainThread:6088 [backend.py:_multiprocessing_setup():101] multiprocessing start_methods=spawn, using: spawn
+2025-05-13 08:15:42,412 INFO    MainThread:6088 [wandb_init.py:init():907] backend started and connected
+2025-05-13 08:15:42,413 INFO    MainThread:6088 [wandb_init.py:init():1005] updated telemetry
+2025-05-13 08:15:42,579 INFO    MainThread:6088 [wandb_init.py:init():1029] communicating run to backend with 90.0 second timeout
+2025-05-13 08:15:44,893 INFO    MainThread:6088 [wandb_init.py:init():1104] starting run threads in backend
+2025-05-13 08:15:45,016 INFO    MainThread:6088 [wandb_run.py:_console_start():2573] atexit reg
+2025-05-13 08:15:45,017 INFO    MainThread:6088 [wandb_run.py:_redirect():2421] redirect: wrap_raw
+2025-05-13 08:15:45,017 INFO    MainThread:6088 [wandb_run.py:_redirect():2490] Wrapping output streams.
+2025-05-13 08:15:45,017 INFO    MainThread:6088 [wandb_run.py:_redirect():2513] Redirects installed.
+2025-05-13 08:15:45,020 INFO    MainThread:6088 [wandb_init.py:init():1150] run started, returning control to user process
+2025-05-13 08:15:45,020 INFO    MainThread:6088 [wandb_run.py:_config_callback():1436] config_cb None None {'epochs': 10, 'batch_size': 2, 'learning_rate': 0.0001, 'val_percent': 0.25, 'save_checkpoint': True, 'img_scale': 0.5, 'amp': False}
+2025-05-13 08:16:24,427 INFO    MsgRouterThr:6088 [mailbox.py:close():129] [no run ID] Closing mailbox, abandoning 1 handles.

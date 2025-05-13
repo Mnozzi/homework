@@ -1,0 +1,31 @@
+{
+  "os": "Windows-11-10.0.22000-SP0",
+  "python": "CPython 3.12.9",
+  "startedAt": "2025-05-13T00:38:15.678709Z",
+  "program": "C:\\Users\\张恩溪\\Desktop\\OTMorph-main\\homework\\Pytorch-UNet-master\\train.py",
+  "codePath": "Pytorch-UNet-master\\train.py",
+  "git": {
+    "remote": "https://github.com/Mnozzi/homework.git",
+    "commit": "4ffaaaebb049ae9bbf7e1a11a4840d8dfb2b0808"
+  },
+  "email": "948474261@qq.com",
+  "root": "C:\\Users\\张恩溪\\Desktop\\OTMorph-main\\homework\\Pytorch-UNet-master",
+  "host": "LAPTOP-BV42KQMF",
+  "executable": "D:\\anaconda3\\envs\\exp1\\python.exe",
+  "codePathLocal": "train.py",
+  "cpu_count": 8,
+  "cpu_count_logical": 16,
+  "disk": {
+    "/": {
+      "total": "214749409280",
+      "used": "207775821824"
+    }
+  },
+  "memory": {
+    "total": "14702026752"
+  },
+  "cpu": {
+    "count": 8,
+    "countLogical": 16
+  }
+}

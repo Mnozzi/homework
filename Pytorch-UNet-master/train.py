@@ -214,9 +214,9 @@ if __name__ == '__main__':
     # 生成随机索引
     indices = np.arange(num_samples)
     np.random.shuffle(indices)
-    fold_indices = np.array_split(indices, k)
+
     # TODO: 创建每个折对应的Dataset样本索引
-    
+    fold_indices = np.array_split(indices, k)
 
     # 使用每个折进行训练和验证
     for fold in range(k):
