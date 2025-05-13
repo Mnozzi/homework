@@ -83,106 +83,66 @@ def train_model(
             for batch in train_loader:
                 images, true_masks = batch['image'], batch['mask']
 
+                # 数据校验
                 assert images.shape[1] == model.n_channels, \
-                    f'Network has been defined with {model.n_channels} input channels, ' \
-                    f'but loaded images have {images.shape[1]} channels. Please check that ' \
-                    'the images are loaded correctly.'
-                
+                    f'输入图像的通道数 ({images.shape[1]}) 与模型定义 ({model.n_channels}) 不匹配'
 
+                # 数据搬移到设备
                 images = images.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
                 true_masks = true_masks.to(device=device, dtype=torch.long)
+
+                # 混合精度训练
                 with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=amp):
                     masks_pred = model(images)
                     loss = criterion(masks_pred, true_masks)
-                    
-                optimizer.zero_grad(set_to_none=True)
 
-                '''For device==cpu version'''
+                # 反向传播
+                optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 optimizer.step()
-                '''For device==cpu version'''
 
-                '''For device==cuda version'''
-                # grad_scaler.scale(loss).backward()
-                # torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clipping)
-                # grad_scaler.step(optimizer)
-                # grad_scaler.update()
-                '''For device==cuda version'''
-
+                # 更新进度条和日志
                 pbar.update(images.shape[0])
                 global_step += 1
                 epoch_loss += loss.item()
-                experiment.log({
-                    'train loss': loss.item(),
-                    'step': global_step,
-                    'epoch': epoch
-                })
+                experiment.log({'train loss': loss.item(), 'step': global_step, 'epoch': epoch})
                 pbar.set_postfix(**{'loss (batch)': loss.item()})
 
-                # Evaluation round
-                division_step = (n_train // (3 * batch_size))
-                if division_step > 0:
-                    if global_step % division_step == 0:
-                        histograms = {}
-                        for tag, value in model.named_parameters():
-                            tag = tag.replace('/', '.')
-                            if not (torch.isinf(value) | torch.isnan(value)).any():
-                                histograms['Weights/' + tag] = wandb.Histogram(value.data.cpu())
-                            if not (torch.isinf(value.grad) | torch.isnan(value.grad)).any():
-                                histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
+                # --- 验证阶段 (每个epoch结束后执行一次) ---
+                val_score, val_ce = evaluate(model, val_loader, device, amp)
+                scheduler.step(val_score)  # 仅根据Dice分数调整学习率
 
-                        val_score, val_ce = evaluate(model, val_loader, device, amp)
-                        scheduler.step(val_score)
-                        scheduler.step(val_ce)
+                # --- 早停逻辑 ---
+                if val_score > best_val_score:
+                    best_val_score = val_score
+                    epochs_no_improve = 0
+                    # 保存最佳模型
+                    best_model_path = str(dir_checkpoint / f'best_model_fold{fold}.pth')
+                    torch.save(model.state_dict(), best_model_path)
+                    logging.info(f'🔥 Epoch {epoch}: 最佳模型已保存, Dice分数={val_score:.4f}')
+                else:
+                    epochs_no_improve += 1
+                    logging.info(f'⏳ Epoch {epoch}: {epochs_no_improve}/{early_stop_patience} 次未提升')
 
-                        logging.info('Validation Dice score: {}'.format(val_score))
-                        # logging.info('Validation cross-entropy score: {}'.format(val_ce))
-                        try:
-                            experiment.log({
-                                'learning rate': optimizer.param_groups[0]['lr'],
-                                'validation Dice': val_score,
-                                'validation Cross-Entropy': val_ce,
-                                'images': wandb.Image(images[0].cpu()),
-                                'masks': {
-                                    'true': wandb.Image(true_masks[0].float().cpu()),
-                                    'pred': wandb.Image(masks_pred.argmax(dim=1)[0].float().cpu()),
-                                },
-                                'step': global_step,
-                                'epoch': epoch,
-                                **histograms
-                            })
-                        except:
-                            pass
+                    # 触发早停
+                    if epochs_no_improve >= early_stop_patience:
+                        logging.info(f'🛑 Epoch {epoch}: 早停触发!')
+                        break  # 终止训练循环
 
-        if save_checkpoint:
-            Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
-            state_dict = model.state_dict()
-            state_dict['mask_values'] = dataset.mask_values
-            torch.save(state_dict, str(dir_checkpoint / 'checkpoint_epoch{}.pth'.format(epoch)))
-            logging.info(f'Checkpoint {epoch} saved!')
-        if val_score > best_val_score:
-            best_val_score = val_score
-            epochs_no_improve = 0
-            # 保存最佳模型
-            best_model_path = str(dir_checkpoint / f'best_model_fold{fold}.pth')
-            torch.save(model.state_dict(), best_model_path)
-            logging.info(f'Checkpoint (best) saved at epoch {epoch}!')
-        else:
-            epochs_no_improve += 1
-            logging.info(f'No improvement for {epochs_no_improve}/{early_stop_patience} epochs.')
+                # --- 常规模型保存 (可选) ---
+                if save_checkpoint:
+                    checkpoint_path = str(dir_checkpoint / f'checkpoint_epoch{epoch}.pth')
+                    torch.save(model.state_dict(), checkpoint_path)
+                    logging.info(f'📦 Epoch {epoch}: 常规检查点已保存')
 
-            # 触发早停
-            if epochs_no_improve >= early_stop_patience:
-                logging.info(f'Early stopping triggered at epoch {epoch}!')
-                break  # 终止训练循环
-    # 训练结束后加载最佳模型
-    if best_model_path is not None:
-        model.load_state_dict(torch.load(best_model_path))
-        logging.info(f'Loaded best model from {best_model_path}')
-    else:
-        logging.warning('No best model found.')
+                # --- 训练结束后加载最佳模型 ---
+            if best_model_path:
+                model.load_state_dict(torch.load(best_model_path))
+                logging.info(f'🎯 最佳模型已加载: {best_model_path}')
+            else:
+                logging.warning('⚠️ 未找到最佳模型')
 
-    return model  # 返回最佳模型
+            return model
 
 def get_args():
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
