@@ -222,15 +222,30 @@ if __name__ == '__main__':
     for fold in range(k):
         
         # TODO: 分别创建 train_idx和 val_idx 实现数据集划分
+        # 每个 Fold 新建模型
+        model = UNet(n_channels=3, n_classes=args.classes, bilinear=args.bilinear)
+        model = model.to(memory_format=torch.channels_last)
+        model.to(device=device)
+
+        if args.load:  # 加载预训练权重
+            state_dict = torch.load(args.load, map_location=device)
+            del state_dict['mask_values']
+            model.load_state_dict(state_dict)
+
+        # 创建新的优化器，避免参数残留
+        optimizer = optim.RMSprop(model.parameters(), lr=args.lr, weight_decay=1e-8, momentum=0.999)
+
+        # 划分数据集
         val_idx = fold_indices[fold].tolist()
         train_idx = np.concatenate([f for i, f in enumerate(fold_indices) if i != fold]).tolist()
-
         train_sampler = SubsetRandomSampler(train_idx)
         val_sampler = SubsetRandomSampler(val_idx)
 
-        train_loader = DataLoader(dataset, batch_size=args.batch_size, sampler=train_sampler, num_workers=0, pin_memory=True)
-        val_loader = DataLoader(dataset, batch_size=args.batch_size, sampler=val_sampler, num_workers=0, pin_memory=True)
-
+        # 创建 DataLoader
+        train_loader = DataLoader(dataset, batch_size=args.batch_size, sampler=train_sampler,
+                                  num_workers=4, pin_memory=True)
+        val_loader = DataLoader(dataset, batch_size=args.batch_size, sampler=val_sampler,
+                                num_workers=4, pin_memory=True)
         train_model(
             fold,
             model=model,
