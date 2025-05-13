@@ -103,7 +103,7 @@ def train_model(
                 global_step += 1
                 epoch_loss += loss.item()
                 experiment.log({'train loss': loss.item(), 'step': global_step, 'epoch': epoch})
-                pbar.set_postfix(**​{'loss (batch)': loss.item()})
+                pbar.set_postfix(**{'loss (batch)': loss.item()})
 
         # --- 验证阶段 (每个 Epoch 结束后执行一次) ---
         val_score, val_ce = evaluate(model, val_loader, device, amp)
