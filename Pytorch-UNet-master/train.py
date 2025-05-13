@@ -9,12 +9,17 @@ from torch import optim
 from torch.utils.data import DataLoader, SubsetRandomSampler
 from tqdm import tqdm
 import numpy as np
-
+from kaggle_secrets import UserSecretsClient
 import wandb
 from evaluate import evaluate
 from unet import UNet
 from utils.data_loading import BasicDataset
+# 从 Kaggle Secrets 获取密钥
+user_secrets = UserSecretsClient()
+wandb_api_key = user_secrets.get_secret("e5f489cda141460127bb03a3b2c5e7b3b990b83d")
 
+# 非交互式登录
+wandb.login(key=wandb_api_key)
 dir_img = Path('/kaggle/working/homework/Pytorch-UNet-master/data/train/img')
 dir_mask = Path('/kaggle/working/homework/Pytorch-UNet-master/data/train/mask')
 dir_checkpoint = Path('/kaggle/working/homework/Pytorch-UNet-master/checkpoints')
