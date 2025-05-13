@@ -39,7 +39,7 @@ def train_model(
         gradient_clipping: float = 1.0,
 ):
     # (Initialize logging)
-    experiment = wandb.init(project='U-Net', name=f'fold_{fold}', mode="online")
+    experiment = wandb.init(project='U-Net', name=f'fold_{fold}', mode="disabled")
     experiment.config.update(
         dict(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate,
              val_percent=val_percent, save_checkpoint=save_checkpoint, img_scale=img_scale, amp=amp)
