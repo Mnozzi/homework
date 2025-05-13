@@ -37,6 +37,7 @@ def train_model(
         weight_decay: float = 1e-8,
         momentum: float = 0.999,
         gradient_clipping: float = 1.0,
+        early_stop_patience: int = 5
 ):
     # (Initialize logging)
     experiment = wandb.init(project='U-Net', name=f'fold_{fold}', mode="disabled")
@@ -71,7 +72,9 @@ def train_model(
 
     criterion = nn.CrossEntropyLoss()
     global_step = 0
-
+    best_val_score = -np.inf  # 假设监控指标是Dice分数（越大越好）
+    epochs_no_improve = 0
+    best_model_path = '/kaggle/working/homework/Pytorch-UNet-master/earlymodel'  # 保存最佳模型路径
     # # 5. Begin training
     for epoch in range(1, epochs + 1):
         model.train()
@@ -157,7 +160,29 @@ def train_model(
             state_dict['mask_values'] = dataset.mask_values
             torch.save(state_dict, str(dir_checkpoint / 'checkpoint_epoch{}.pth'.format(epoch)))
             logging.info(f'Checkpoint {epoch} saved!')
+        if val_score > best_val_score:
+            best_val_score = val_score
+            epochs_no_improve = 0
+            # 保存最佳模型
+            best_model_path = str(dir_checkpoint / f'best_model_fold{fold}.pth')
+            torch.save(model.state_dict(), best_model_path)
+            logging.info(f'Checkpoint (best) saved at epoch {epoch}!')
+        else:
+            epochs_no_improve += 1
+            logging.info(f'No improvement for {epochs_no_improve}/{early_stop_patience} epochs.')
 
+            # 触发早停
+            if epochs_no_improve >= early_stop_patience:
+                logging.info(f'Early stopping triggered at epoch {epoch}!')
+                break  # 终止训练循环
+    # 训练结束后加载最佳模型
+    if best_model_path is not None:
+        model.load_state_dict(torch.load(best_model_path))
+        logging.info(f'Loaded best model from {best_model_path}')
+    else:
+        logging.warning('No best model found.')
+
+    return model  # 返回最佳模型
 
 def get_args():
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
@@ -172,6 +197,8 @@ def get_args():
     parser.add_argument('--amp', action='store_true', default=False, help='Use mixed precision')
     parser.add_argument('--bilinear', action='store_true', default=False, help='Use bilinear upsampling')
     parser.add_argument('--classes', '-c', type=int, default=2, help='Number of classes')
+    parser.add_argument('--early-stop', '-es', type=int, default=5,
+                        help='Early stopping patience (epochs with no improvement)')
 
     return parser.parse_args()
 
@@ -220,20 +247,14 @@ if __name__ == '__main__':
 
     # 使用每个折进行训练和验证
     for fold in range(k):
-        
-        # TODO: 分别创建 train_idx和 val_idx 实现数据集划分
         # 每个 Fold 新建模型
         model = UNet(n_channels=3, n_classes=args.classes, bilinear=args.bilinear)
-        model = model.to(memory_format=torch.channels_last)
         model.to(device=device)
 
         if args.load:  # 加载预训练权重
             state_dict = torch.load(args.load, map_location=device)
             del state_dict['mask_values']
             model.load_state_dict(state_dict)
-
-        # 创建新的优化器，避免参数残留
-        optimizer = optim.RMSprop(model.parameters(), lr=args.lr, weight_decay=1e-8, momentum=0.999)
 
         # 划分数据集
         val_idx = fold_indices[fold].tolist()
@@ -246,7 +267,9 @@ if __name__ == '__main__':
                                   num_workers=4, pin_memory=True)
         val_loader = DataLoader(dataset, batch_size=args.batch_size, sampler=val_sampler,
                                 num_workers=4, pin_memory=True)
-        train_model(
+
+        # 训练模型（优化器在 train_model 内初始化）
+        trained_model = train_model(
             fold,
             model=model,
             train_loader=train_loader,
@@ -254,6 +277,7 @@ if __name__ == '__main__':
             epochs=args.epochs,
             batch_size=args.batch_size,
             learning_rate=args.lr,
+            early_stop_patience=args.early_stop,  # 传递早停参数
             device=device,
             img_scale=args.scale,
             val_percent=args.val / 100,
