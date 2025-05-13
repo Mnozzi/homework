@@ -3,28 +3,29 @@ import logging
 import os
 import torch
 import torch.nn as nn
-import numpy as np
+import torch.nn.functional as F
 from pathlib import Path
 from torch import optim
 from torch.utils.data import DataLoader, SubsetRandomSampler
 from tqdm import tqdm
+import numpy as np
+
 import wandb
 from evaluate import evaluate
 from unet import UNet
 from utils.data_loading import BasicDataset
 
-# 数据路径定义
 dir_img = Path('/kaggle/working/homework/Pytorch-UNet-master/data/train/img')
 dir_mask = Path('/kaggle/working/homework/Pytorch-UNet-master/data/train/mask')
 dir_checkpoint = Path('/kaggle/working/homework/Pytorch-UNet-master/checkpoints')
 
 
 def train_model(
-        fold: int,
-        model: nn.Module,
-        train_loader: DataLoader,
-        val_loader: DataLoader,
-        device: torch.device,
+        fold,
+        model,
+        train_loader,
+        val_loader,
+        device,
         epochs: int = 5,
         batch_size: int = 1,
         learning_rate: float = 1e-5,
@@ -35,186 +36,220 @@ def train_model(
         weight_decay: float = 1e-8,
         momentum: float = 0.999,
         gradient_clipping: float = 1.0,
-        early_stop_patience: int = 5
-) -> nn.Module:
-    """
-    K折交叉验证的单Fold训练函数
-    """
-    # 初始化WandB（已禁用）
-    experiment = wandb.init(project='U-Net', name=f'fold_{fold}', mode="disabled")
-    experiment.config.update({
-        'epochs': epochs,
-        'batch_size': batch_size,
-        'learning_rate': learning_rate,
-        'val_percent': val_percent,
-        'img_scale': img_scale,
-        'amp': amp
-    })
-
-    # 优化器和学习率调度器
-    optimizer = optim.RMSprop(
-        model.parameters(),
-        lr=learning_rate,
-        weight_decay=weight_decay,
-        momentum=momentum
+):
+    # (Initialize logging)
+    experiment = wandb.init(project='U-Net', name=f'fold_{fold}', mode="online")
+    experiment.config.update(
+        dict(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate,
+             val_percent=val_percent, save_checkpoint=save_checkpoint, img_scale=img_scale, amp=amp)
     )
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=5)
+
+    n_val = int(len(val_loader) * batch_size)
+    n_train = int(len(train_loader) * batch_size)
+
+    logging.info(f'''Starting training:
+        Epochs:          {epochs}
+        Batch size:      {batch_size}
+        Learning rate:   {learning_rate}
+        Training size:   {n_train}
+        Validation size: {n_val}
+        Checkpoints:     {save_checkpoint}
+        Device:          {device.type}
+        Images scaling:  {img_scale}
+        Mixed Precision: {amp}
+    ''')
+
+    # 4. Set up the optimizer, the loss, the learning rate scheduler and the loss scaling for AMP
+    optimizer = optim.RMSprop(model.parameters(),
+                              lr=learning_rate, weight_decay=weight_decay, momentum=momentum)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=5)  # goal: maximize Dice score
+
+    '''For device==cuda version'''
+    # grad_scaler = torch.cuda.amp.GradScaler(enabled=amp)
+    '''For device==cuda version'''
+
     criterion = nn.CrossEntropyLoss()
+    global_step = 0
 
-    # 早停变量
-    best_val_score = -np.inf
-    epochs_no_improve = 0
-    best_model_path = None
-
-    # 训练循环
+    # # 5. Begin training
     for epoch in range(1, epochs + 1):
         model.train()
         epoch_loss = 0
-        global_step = 0
-
-        # --- 训练阶段 ---
-        with tqdm(total=len(train_loader), desc=f'Fold {fold} Epoch {epoch}/{epochs}', unit='img') as pbar:
+        with tqdm(total=n_train, desc=f'Epoch {epoch}/{epochs}', unit='img') as pbar:
             for batch in train_loader:
                 images, true_masks = batch['image'], batch['mask']
 
-                # 数据校验和设备搬移
                 assert images.shape[1] == model.n_channels, \
-                    f"输入通道数 {images.shape[1]} 与模型定义 {model.n_channels} 不匹配"
-                images = images.to(device, dtype=torch.float32, memory_format=torch.channels_last)
-                true_masks = true_masks.to(device, dtype=torch.long)
+                    f'Network has been defined with {model.n_channels} input channels, ' \
+                    f'but loaded images have {images.shape[1]} channels. Please check that ' \
+                    'the images are loaded correctly.'
 
-                # 混合精度训练
+                images = images.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
+                true_masks = true_masks.to(device=device, dtype=torch.long)
                 with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=amp):
                     masks_pred = model(images)
                     loss = criterion(masks_pred, true_masks)
 
-                # 反向传播
                 optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clipping)
-                optimizer.step()
 
-                # 更新进度条
-                pbar.update(1)
+                '''For device==cpu version'''
+                loss.backward()
+                optimizer.step()
+                '''For device==cpu version'''
+
+                '''For device==cuda version'''
+                # grad_scaler.scale(loss).backward()
+                # torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clipping)
+                # grad_scaler.step(optimizer)
+                # grad_scaler.update()
+                '''For device==cuda version'''
+
+                pbar.update(images.shape[0])
                 global_step += 1
                 epoch_loss += loss.item()
-                pbar.set_postfix({'loss': f'{loss.item():.3f}'})
-                experiment.log({'train_loss': loss.item(), 'step': global_step, 'epoch': epoch})
+                experiment.log({
+                    'train loss': loss.item(),
+                    'step': global_step,
+                    'epoch': epoch
+                })
+                pbar.set_postfix(**{'loss (batch)': loss.item()})
 
-        # --- 验证阶段 (每个Epoch结束后执行一次) ---
-        val_score, val_ce = evaluate(model, val_loader, device, amp)
-        scheduler.step(val_score)  # 学习率调整
-        logging.info(f'Fold {fold} Epoch {epoch}: Val Dice = {val_score:.4f}, CE Loss = {val_ce:.4f}')
+                # Evaluation round
+                division_step = (n_train // (3 * batch_size))
+                if division_step > 0:
+                    if global_step % division_step == 0:
+                        histograms = {}
+                        for tag, value in model.named_parameters():
+                            tag = tag.replace('/', '.')
+                            if not (torch.isinf(value) | torch.isnan(value)).any():
+                                histograms['Weights/' + tag] = wandb.Histogram(value.data.cpu())
+                            if not (torch.isinf(value.grad) | torch.isnan(value.grad)).any():
+                                histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
-        # --- 早停逻辑 ---
-        if val_score > best_val_score:
-            best_val_score = val_score
-            epochs_no_improve = 0
-            best_model_path = str(dir_checkpoint / f'best_model_fold{fold}.pth')
-            torch.save(model.state_dict(), best_model_path)
-            logging.info(f'Fold {fold}: 保存最佳模型至 {best_model_path}')
-        else:
-            epochs_no_improve += 1
-            logging.info(f'Fold {fold}: {epochs_no_improve}/{early_stop_patience} 次未提升')
-            if epochs_no_improve >= early_stop_patience:
-                logging.info(f'Fold {fold}: 早停触发!')
-                break  # 终止当前Fold的训练
+                        val_score, val_ce = evaluate(model, val_loader, device, amp)
+                        scheduler.step(val_score)
+                        scheduler.step(val_ce)
 
-        # --- 保存常规检查点 ---
+                        logging.info('Validation Dice score: {}'.format(val_score))
+                        # logging.info('Validation cross-entropy score: {}'.format(val_ce))
+                        try:
+                            experiment.log({
+                                'learning rate': optimizer.param_groups[0]['lr'],
+                                'validation Dice': val_score,
+                                'validation Cross-Entropy': val_ce,
+                                'images': wandb.Image(images[0].cpu()),
+                                'masks': {
+                                    'true': wandb.Image(true_masks[0].float().cpu()),
+                                    'pred': wandb.Image(masks_pred.argmax(dim=1)[0].float().cpu()),
+                                },
+                                'step': global_step,
+                                'epoch': epoch,
+                                **histograms
+                            })
+                        except:
+                            pass
+
         if save_checkpoint:
-            checkpoint_path = str(dir_checkpoint / f'checkpoint_fold{fold}_epoch{epoch}.pth')
-            torch.save(model.state_dict(), checkpoint_path)
-
-    # 加载最佳模型
-    if best_model_path and os.path.exists(best_model_path):
-        model.load_state_dict(torch.load(best_model_path, map_location=device))
-        logging.info(f'Fold {fold}: 已加载最佳模型')
-    else:
-        logging.warning(f'Fold {fold}: 未找到最佳模型')
-
-    return model
+            Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
+            state_dict = model.state_dict()
+            state_dict['mask_values'] = dataset.mask_values
+            torch.save(state_dict, str(dir_checkpoint / 'checkpoint_epoch{}.pth'.format(epoch)))
+            logging.info(f'Checkpoint {epoch} saved!')
 
 
-def get_args() -> argparse.Namespace:
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser(description='训练UNet模型')
-    parser.add_argument('--epochs', '-e', type=int, default=10, help='训练轮次')
-    parser.add_argument('--batch-size', '-b', type=int, default=2, help='批量大小')
-    parser.add_argument('--learning-rate', '-l', type=float, default=1e-4, help='学习率')
-    parser.add_argument('--load', '-f', type=str, default=None, help='预训练模型路径')
-    parser.add_argument('--scale', '-s', type=float, default=0.5, help='图像缩放比例')
-    parser.add_argument('--validation', '-v', type=float, default=25.0, help='验证集比例（0-100）')
-    parser.add_argument('--amp', action='store_true', help='启用混合精度训练')
-    parser.add_argument('--bilinear', action='store_true', help='使用双线性上采样')
-    parser.add_argument('--classes', '-c', type=int, default=2, help='分类类别数')
-    parser.add_argument('--early-stop', '-es', type=int, default=5, help='早停耐心值')
+def get_args():
+    parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
+    parser.add_argument('--epochs', '-e', metavar='E', type=int, default=10, help='Number of epochs')
+    parser.add_argument('--batch-size', '-b', dest='batch_size', metavar='B', type=int, default=2, help='Batch size')
+    parser.add_argument('--learning-rate', '-l', metavar='LR', type=float, default=1e-4,
+                        help='Learning rate', dest='lr')
+    parser.add_argument('--load', '-f', type=str, default=False, help='Load model from a .pth file')
+    parser.add_argument('--scale', '-s', type=float, default=0.5, help='Downscaling factor of the images')
+    parser.add_argument('--validation', '-v', dest='val', type=float, default=25.0,
+                        help='Percent of the data that is used as validation (0-100)')
+    parser.add_argument('--amp', action='store_true', default=False, help='Use mixed precision')
+    parser.add_argument('--bilinear', action='store_true', default=False, help='Use bilinear upsampling')
+    parser.add_argument('--classes', '-c', type=int, default=2, help='Number of classes')
+
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     args = get_args()
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
+
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    logging.info(f'训练设备: {device}')
+    logging.info(f'Using device {device}')
 
-    # 初始化K折交叉验证
-    k = 5
+    # Change here to adapt to your data
+    # n_channels=3 for RGB images
+    # n_classes is the number of probabilities you want to get per pixel
+    model = UNet(n_channels=3, n_classes=args.classes, bilinear=args.bilinear)
+    model = model.to(memory_format=torch.channels_last)
+
+    logging.info(f'Network:\n'
+                 f'\t{model.n_channels} input channels\n'
+                 f'\t{model.n_classes} output channels (classes)\n'
+                 f'\t{"Bilinear" if model.bilinear else "Transposed conv"} upscaling')
+
+    if args.load:
+        state_dict = torch.load(args.load, map_location=device)
+        del state_dict['mask_values']
+        model.load_state_dict(state_dict)
+        logging.info(f'Model loaded from {args.load}')
+    # pdb.set_trace()
+    model.to(device=device)
+
+    # 1. Create dataset
     dataset = BasicDataset(dir_img, dir_mask, args.scale)
-    indices = np.random.permutation(len(dataset))
+
+    # # 2. Split into train / validation partitions
+    # TODO: 使用K折交叉验证完成模型的训练和验证
+    # 定义k值和折数
+    k = 5
+    num_samples = len(dataset)
+    # 创建每个折对应的Dataset样本索引
+    indices = np.arange(num_samples)
+    np.random.shuffle(indices)
     fold_indices = np.array_split(indices, k)
-
-    # 创建检查点目录
-    dir_checkpoint.mkdir(parents=True, exist_ok=True)
-
-    # K折训练循环
     for fold in range(k):
-        logging.info(f'\n{"=" * 40}')
-        logging.info(f'开始训练 Fold {fold + 1}/{k}')
-        logging.info(f'{"=" * 40}\n')
-
-        # 数据划分
+        # 分别创建 train_idx和 val_idx 实现数据集划分
         val_idx = fold_indices[fold]
         train_idx = np.concatenate([fold_indices[i] for i in range(k) if i != fold])
 
-        # 创建数据加载器
-        train_loader = DataLoader(
-            dataset,
-            batch_size=args.batch_size,
-            sampler=SubsetRandomSampler(train_idx),
-            num_workers=4,
-            pin_memory=True
-        )
-        val_loader = DataLoader(
-            dataset,
-            batch_size=args.batch_size,
-            sampler=SubsetRandomSampler(val_idx),
-            num_workers=4,
-            pin_memory=True
-        )
+        train_sampler = SubsetRandomSampler(train_idx)
+        val_sampler = SubsetRandomSampler(val_idx)
 
-        # 初始化模型
-        model = UNet(n_channels=3, n_classes=args.classes, bilinear=args.bilinear).to(device)
-        if args.load:
-            state_dict = torch.load(args.load, map_location=device)
-            if 'mask_values' in state_dict:
-                del state_dict['mask_values']
-            model.load_state_dict(state_dict)
-            logging.info(f'从 {args.load} 加载预训练权重')
+    # TODO: 创建每个折对应的Dataset样本索引
 
-        # 训练当前Fold
-        trained_model = train_model(
-            fold=fold,
+    # 使用每个折进行训练和验证
+    for fold in range(k):
+        # TODO: 分别创建 train_idx和 val_idx 实现数据集划分
+        val_idx = fold_indices[fold]  # 当前折作为验证集
+        train_idx = np.concatenate([fold_indices[i] for i in range(k) if i != fold])  # 其他折合并为训练集
+
+        train_sampler = SubsetRandomSampler(train_idx)
+        val_sampler = SubsetRandomSampler(val_idx)
+
+        train_loader = DataLoader(dataset, batch_size=args.batch_size, sampler=train_sampler, num_workers=0,
+                                  pin_memory=True)
+        val_loader = DataLoader(dataset, batch_size=args.batch_size, sampler=val_sampler, num_workers=0,
+                                pin_memory=True)
+
+        train_model(
+            fold,
             model=model,
             train_loader=train_loader,
             val_loader=val_loader,
-            device=device,
             epochs=args.epochs,
             batch_size=args.batch_size,
-            learning_rate=args.learning_rate,
-            early_stop_patience=args.early_stop,
+            learning_rate=args.lr,
+            device=device,
+            img_scale=args.scale,
+            val_percent=args.val / 100,
             amp=args.amp
         )
 
-        # 保存最终模型（可选）
-        final_model_path = str(dir_checkpoint / f'final_model_fold{fold}.pth')
-        torch.save(trained_model.state_dict(), final_model_path)
+
+
+
